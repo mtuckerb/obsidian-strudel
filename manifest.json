@@ -1,0 +1,12 @@
+{
+  "id": "strudel-repl",
+  "name": "Strudel REPL",
+  "version": "1.0.0",
+  "description": "Converts Strudel code blocks to interactive REPL elements",
+  "author": {
+    "name": "Tucker Bradford",
+    "websiite": "https://tuckerbradford.com"
+  },
+  "minAppVersion": "0.13.24",
+  "main": "main.js"
+}
