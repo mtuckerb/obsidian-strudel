@@ -1,6 +1,10 @@
 const { Plugin, PluginSettingTab, Setting, MarkdownView, Notice } = require("obsidian");
 
 module.exports = class StrudelReplPlugin extends Plugin {
+    constructor() {
+        super(...arguments);
+        this.activeRepls = new Map();
+    }
     async onload() {
         await this.loadSettings();
         await this.loadStrudelDependencies();
@@ -21,6 +25,30 @@ module.exports = class StrudelReplPlugin extends Plugin {
             timestamp: 0,
             content: null
         };
+
+        this.registerEvent(
+            this.app.workspace.on('layout-change', async () => {
+                const activeLeaf = this.app.workspace.activeLeaf;
+                if (!activeLeaf || !(activeLeaf.view instanceof MarkdownView)) {
+                    await this.stopAllMusic();
+                }
+            })
+        );
+    }
+
+    async onunload() {
+        await this.stopAllMusic();
+        // Additional cleanup
+        for (const [id, repl] of this.activeRepls) {
+            if (repl.dispose) {
+                try {
+                    await repl.dispose();
+                } catch (error) {
+                    console.error('Error disposing REPL:', error);
+                }
+            }
+        }
+        this.activeRepls.clear();
     }
 
     async loadStrudelDependencies() {
@@ -28,9 +56,18 @@ module.exports = class StrudelReplPlugin extends Plugin {
     }
 
     processStrudelBlock(source, el, ctx) {
-        setTimeout(() => {
-            const repl = document.createElement('strudel-editor');
+        setTimeout(async () => {
+            // Stop any existing REPL in this element
+            const existingReplId = el.querySelector('.strudel-repl-container')?.id;
+            if (existingReplId) {
+                await this.stopRepl(existingReplId);
+            }
 
+            el.innerHTML = '';
+
+            const replContainer = document.createElement('div');
+            replContainer.className = 'strudel-repl-container';
+            
             let uuid;
             let markedSource = source.trim();
             const existingUUID = source.match(/\/\* ([a-f0-9-]+) \*\//);
@@ -39,34 +76,53 @@ module.exports = class StrudelReplPlugin extends Plugin {
             } else {
                 uuid = this.generateUUID();
                 markedSource = `/* ${uuid} */\n${source.trim()}`;
-                const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-                if (activeView) {
-                    const content = activeView.editor.getValue();
-                    const codeBlockRegex = /```strudel\n([\s\S]*?)\n```/;
-                    const updatedContent = content.replace(codeBlockRegex, (match, codeContent) => {
-                        return `\`\`\`strudel\n/* ${uuid} */\n${codeContent.trim()}\n\`\`\``;
-                    });
-                    activeView.editor.setValue(updatedContent);
-                }
+                this.updateSourceWithUUID(ctx, uuid);
             }
-        
-            repl.setAttribute('code', markedSource);
-            repl.dataset.uuid = uuid;
-            repl.dataset.sourcePath = ctx.sourcePath;
+
+            // Create a unique ID for this REPL instance
+            const replId = `strudel-repl-${uuid}`;
+            replContainer.id = replId;
+
+            // Use the Strudel REPL library's method to create the REPL (if available)
+            if (window.StrudelRepl && typeof window.StrudelRepl.create === 'function') {
+                try {
+                    const repl = await window.StrudelRepl.create(replContainer, {
+                        code: markedSource,
+                    });
+                    replContainer.replInstance = repl;
+                    this.activeRepls.set(replId, repl);
+                } catch (error) {
+                    console.error('Error creating Strudel REPL:', error);
+                }
+            } else {
+                const repl = document.createElement('strudel-editor');
+                repl.setAttribute('code', markedSource);
+                replContainer.appendChild(repl);
+                this.activeRepls.set(replId, repl);
+            }
+
+            replContainer.dataset.uuid = uuid;
+            replContainer.dataset.sourcePath = ctx.sourcePath;
 
             // Create a save button
             const saveButton = document.createElement('button');
             saveButton.textContent = 'Save REPL Content';
-            saveButton.addEventListener('click', () => this.saveReplContent(repl, uuid));
+            saveButton.addEventListener('click', () => this.saveReplContent(replContainer, uuid));
 
-            // Append REPL and save button
-            el.appendChild(repl);
+            // Append REPL container and save button
+            el.appendChild(replContainer);
             el.appendChild(saveButton);
-        })
+        }, 0);
     }
 
-    async saveReplContent(repl, uuid) {
-        const newCode = repl.editor.code;
+    async saveReplContent(replContainer, uuid) {
+        let newCode;
+        if (replContainer.replInstance) {
+            newCode = replContainer.replInstance.getCode();
+        } else {
+            const repl = replContainer.querySelector('strudel-editor');
+            newCode = repl.editor.code;
+        }
         if (!newCode) return;
 
         const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -121,12 +177,12 @@ module.exports = class StrudelReplPlugin extends Plugin {
         const view = activeLeaf.view;
         if (!(view instanceof MarkdownView)) return;
 
-        const replElements = view.contentEl.querySelectorAll('strudel-editor');
-        if (replElements.length === 0) return;
+        const replContainers = view.contentEl.querySelectorAll('.strudel-repl-container');
+        if (replContainers.length === 0) return;
 
         // If there's only one REPL, save it. If there are multiple, save the last one (assuming it's the active one)
-        const activeRepl = replElements[replElements.length - 1];
-        this.saveReplContent(activeRepl, activeRepl.dataset.uuid);
+        const activeReplContainer = replContainers[replContainers.length - 1];
+        this.saveReplContent(activeReplContainer, activeReplContainer.dataset.uuid);
     }
 
     debounce(func, wait) {
@@ -153,6 +209,63 @@ module.exports = class StrudelReplPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+    }
+
+    updateSourceWithUUID(ctx, uuid) {
+        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!activeView) return;
+
+        const editor = activeView.editor;
+        const content = editor.getValue();
+        const lines = content.split('\n');
+        
+        // Find the specific code block
+        let startLine = parseInt(ctx.sourcePath.split(':')[1]) - 1;
+        let endLine = startLine;
+        
+        // Find the start of the code block
+        while (startLine > 0 && !lines[startLine].trim().startsWith('```strudel')) {
+            startLine--;
+        }
+        
+        // Find the end of the code block
+        while (endLine < lines.length && !lines[endLine].trim().startsWith('```')) {
+            endLine++;
+        }
+        
+        // Insert the UUID comment right after the ```strudel line
+        lines.splice(startLine + 1, 0, `/* ${uuid} */`);
+        
+        const updatedContent = lines.join('\n');
+        editor.setValue(updatedContent);
+    }
+
+    async stopRepl(replId) {
+        const repl = this.activeRepls.get(replId);
+        if (repl) {
+            try {
+                if (repl.stop) {
+                    await repl.stop();
+                } else if (repl.editor && repl.editor.stop) {
+                    await repl.editor.stop();
+                }
+                // Additional cleanup
+                if (repl.dispose) {
+                    await repl.dispose();
+                }
+            } catch (error) {
+                console.error('Error stopping REPL:', error);
+            } finally {
+                this.activeRepls.delete(replId);
+            }
+        }
+    }
+
+    async stopAllMusic() {
+        for (const [id, repl] of this.activeRepls) {
+            await this.stopRepl(id);
+        }
+        this.activeRepls.clear();
     }
 }
 
