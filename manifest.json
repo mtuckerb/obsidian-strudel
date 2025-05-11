@@ -1,7 +1,7 @@
 {
   "id": "obsidian-strudel",
   "name": "Strudel Code Block Repl",
-  "version": "0.2.0",
+  "version": "2.2",
   "minAppVersion": "0.12.0",
   "description": "A plugin to create a strudle reple and populate it with the strduel code inside.",
   "author": "Tucker Bradford",
