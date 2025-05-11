@@ -1,11 +1,26 @@
-const { Plugin, PluginSettingTab, Setting, MarkdownView } = require("obsidian");
+const { Plugin, PluginSettingTab, Setting, MarkdownView, Notice } = require("obsidian");
 
 module.exports = class StrudelReplPlugin extends Plugin {
     async onload() {
         await this.loadSettings();
         await this.loadStrudelDependencies();
-        this.registerMarkdownCodeBlockProcessor('strudel', await this.processStrudelBlock.bind(this));
+        this.registerMarkdownCodeBlockProcessor('strudel', this.processStrudelBlock.bind(this));
         this.addSettingTab(new StrudelSettingTab(this.app, this));
+
+        // Add a command to save REPL content
+        this.addCommand({
+            id: 'save-strudel-repl',
+            name: 'Save Strudel REPL Content',
+            hotkeys: [{ modifiers: ["Mod", "Shift"], key: "s" }],
+            callback: () => this.saveActiveReplContent()
+        });
+        
+        // Add a property to track the last update
+        this.lastUpdate = {
+            uuid: null,
+            timestamp: 0,
+            content: null
+        };
     }
 
     async loadStrudelDependencies() {
@@ -14,74 +29,74 @@ module.exports = class StrudelReplPlugin extends Plugin {
 
     processStrudelBlock(source, el, ctx) {
         const repl = document.createElement('strudel-editor');
-        const uuid = this.generateUUID();
-        const markedSource = `/* ${uuid} */\n${source.trim()}`;
-        
-        repl.setAttribute('code', source.trim());
-        repl.setAttribute('theme', this.settings.editorTheme); 
+        let uuid;
+        let markedSource = source.trim();
+        const existingUUID = source.match(/\/\* ([a-f0-9-]+) \*\//);
+        if (existingUUID) {
+            uuid = existingUUID[1];
+        } else {
+            uuid = this.generateUUID();
+            markedSource = `/* ${uuid} */\n${source.trim()}`;
+            const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (activeView) {
+                const content = activeView.editor.getValue();
+                const codeBlockRegex = /```strudel\n([\s\S]*?)\n```/;
+                const updatedContent = content.replace(codeBlockRegex, (match, codeContent) => {
+                    return `\`\`\`strudel\n/* ${uuid} */\n${codeContent.trim()}\n\`\`\``;
+                });
+                activeView.editor.setValue(updatedContent);
+            }
+        }
+       
+        repl.setAttribute('code', markedSource);
         repl.dataset.uuid = uuid;
         repl.dataset.sourcePath = ctx.sourcePath;
-        
-        // Use a debounce handler for efficient updates
-        const updateHandler = this.debounce(() => {
-            console.log("Update handler triggered");
-            this.handleReplUpdate(repl, `\`\`\`strudel\n${source.trim()}\n\`\`\``);
-        }, 500);
 
-        // Listen for multiple possible events
-        ['change', 'input', 'update', 'code-change'].forEach(eventName => {
-            repl.addEventListener(eventName, () => {
-                console.log(`Event '${eventName}' triggered`);
-                updateHandler();
-            });
-        });
+        // Create a save button
+        const saveButton = document.createElement('button');
+        saveButton.textContent = 'Save REPL Content';
+        saveButton.addEventListener('click', () => this.saveReplContent(repl, uuid));
 
-        // Add a MutationObserver to watch for attribute changes
-        const observer = new MutationObserver((mutations) => {
-            mutations.forEach((mutation) => {
-                if (mutation.type === 'attributes' && mutation.attributeName === 'code') {
-                    console.log("Code attribute changed");
-                    updateHandler();
-                }
-            });
-        });
-
-        observer.observe(repl, { attributes: true });
-
+        // Append REPL and save button
         el.appendChild(repl);
-
-        // Log when the element is appended
-        console.log("Strudel REPL element appended to the document");
+        el.appendChild(saveButton);
     }
 
-    async handleReplUpdate(editorElement, originalCode) {
-        console.log("handleReplUpdate triggered");
-        const uuid = editorElement.dataset.uuid;
-        const newCode = editorElement.editor.code;
-        window.editorElement = editorElement;
-        if (!newCode) {
-            console.log("No new code found in REPL");
-            return;
-        }
+    async saveReplContent(repl, uuid) {
+        const newCode = repl.editor.code;
+        if (!newCode) return;
 
         const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!activeView) {
-            console.log("No active view found");
-            return;
-        }
+        if (!activeView) return;
 
-        // Find the original code block position
         const content = activeView.editor.getValue();
-        const startPos = content.indexOf(originalCode);
-        if (startPos === -1) {
-            console.log("Original code not found in the document");
-            return;
+        const codeBlocks = content.match(/```strudel\n[\s\S]*?\n```/g);
+        
+        let startPos = -1;
+        let endPos = -1;
+        let existingBlock = '';
+
+        if (codeBlocks) {
+            for (let i = 0; i < codeBlocks.length; i++) {
+                if (codeBlocks[i].includes(`/* ${uuid} */`)) {
+                    startPos = content.indexOf(codeBlocks[i]);
+                    endPos = startPos + codeBlocks[i].length;
+                    existingBlock = codeBlocks[i];
+                    break;
+                }
+            }
         }
 
-        const endPos = startPos + originalCode.length;
-        
-        // Prepare the updated code block
-        const updatedCodeBlock = '```strudel\n' + newCode + '\n```';
+        if (startPos === -1 || endPos === -1) return;
+
+        // Extract the existing UUID comment
+        const uuidComment = existingBlock.match(/\/\* [a-f0-9-]+ \*\//)[0];
+
+        // Remove any existing UUID comment from the new code
+        const cleanNewCode = newCode.replace(/\/\* [a-f0-9-]+ \*\/\n?/, '');
+
+        // Construct the updated code block
+        const updatedCodeBlock = '```strudel\n' + uuidComment + '\n' + cleanNewCode.trim() + '\n```';
 
         // Create transaction for targeted update
         activeView.editor.transaction({
@@ -92,7 +107,23 @@ module.exports = class StrudelReplPlugin extends Plugin {
             }]
         });
 
-        console.log("Document updated with new code from REPL");
+        // Show a notification using the Notice class
+        new Notice("Strudel REPL content saved");
+    }
+
+    saveActiveReplContent() {
+        const activeLeaf = this.app.workspace.activeLeaf;
+        if (!activeLeaf) return;
+
+        const view = activeLeaf.view;
+        if (!(view instanceof MarkdownView)) return;
+
+        const replElements = view.contentEl.querySelectorAll('strudel-editor');
+        if (replElements.length === 0) return;
+
+        // If there's only one REPL, save it. If there are multiple, save the last one (assuming it's the active one)
+        const activeRepl = replElements[replElements.length - 1];
+        this.saveReplContent(activeRepl, activeRepl.dataset.uuid);
     }
 
     debounce(func, wait) {
