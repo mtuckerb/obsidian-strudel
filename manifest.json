@@ -1,12 +1,16 @@
 {
-  "id": "strudel-repl",
-  "name": "Strudel REPL",
-  "version": "1.0.0",
-  "description": "Converts Strudel code blocks to interactive REPL elements",
-  "author": {
-    "name": "Tucker Bradford",
-    "websiite": "https://tuckerbradford.com"
-  },
-  "minAppVersion": "0.13.24",
-  "main": "main.js"
+  "id": "obsidian-strudel",
+  "name": "Strudel Code Block Repl",
+  "version": "0.1.0",
+  "minAppVersion": "0.12.0",
+  "description": "A plugin to create a strudle reple and populate it with the strduel code inside.",
+  "author": "Tucker Bradford",
+  "authorUrl": "https://tuckerbradford.com",
+  "isDesktopOnly": false,
+  "files": [
+    "main.js",
+    "styles.css",
+    "manifest.json",
+    "node_modules/@strudel/repl/dist/repl.js"
+  ]
 }

@@ -1,0 +1,9 @@
+.strudel-editor {
+  display: block;
+  border: 4px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding-left: 18rem;
+}
+.strudel-editor.cm-gutters {
+  position: sticky !important;
+}
