@@ -28,38 +28,41 @@ module.exports = class StrudelReplPlugin extends Plugin {
     }
 
     processStrudelBlock(source, el, ctx) {
-        const repl = document.createElement('strudel-editor');
-        let uuid;
-        let markedSource = source.trim();
-        const existingUUID = source.match(/\/\* ([a-f0-9-]+) \*\//);
-        if (existingUUID) {
-            uuid = existingUUID[1];
-        } else {
-            uuid = this.generateUUID();
-            markedSource = `/* ${uuid} */\n${source.trim()}`;
-            const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-            if (activeView) {
-                const content = activeView.editor.getValue();
-                const codeBlockRegex = /```strudel\n([\s\S]*?)\n```/;
-                const updatedContent = content.replace(codeBlockRegex, (match, codeContent) => {
-                    return `\`\`\`strudel\n/* ${uuid} */\n${codeContent.trim()}\n\`\`\``;
-                });
-                activeView.editor.setValue(updatedContent);
+        setTimeout(() => {
+            const repl = document.createElement('strudel-editor');
+
+            let uuid;
+            let markedSource = source.trim();
+            const existingUUID = source.match(/\/\* ([a-f0-9-]+) \*\//);
+            if (existingUUID) {
+                uuid = existingUUID[1];
+            } else {
+                uuid = this.generateUUID();
+                markedSource = `/* ${uuid} */\n${source.trim()}`;
+                const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+                if (activeView) {
+                    const content = activeView.editor.getValue();
+                    const codeBlockRegex = /```strudel\n([\s\S]*?)\n```/;
+                    const updatedContent = content.replace(codeBlockRegex, (match, codeContent) => {
+                        return `\`\`\`strudel\n/* ${uuid} */\n${codeContent.trim()}\n\`\`\``;
+                    });
+                    activeView.editor.setValue(updatedContent);
+                }
             }
-        }
-       
-        repl.setAttribute('code', markedSource);
-        repl.dataset.uuid = uuid;
-        repl.dataset.sourcePath = ctx.sourcePath;
+        
+            repl.setAttribute('code', markedSource);
+            repl.dataset.uuid = uuid;
+            repl.dataset.sourcePath = ctx.sourcePath;
 
-        // Create a save button
-        const saveButton = document.createElement('button');
-        saveButton.textContent = 'Save REPL Content';
-        saveButton.addEventListener('click', () => this.saveReplContent(repl, uuid));
+            // Create a save button
+            const saveButton = document.createElement('button');
+            saveButton.textContent = 'Save REPL Content';
+            saveButton.addEventListener('click', () => this.saveReplContent(repl, uuid));
 
-        // Append REPL and save button
-        el.appendChild(repl);
-        el.appendChild(saveButton);
+            // Append REPL and save button
+            el.appendChild(repl);
+            el.appendChild(saveButton);
+        })
     }
 
     async saveReplContent(repl, uuid) {
